@@ -5,27 +5,9 @@ Uses three ML models: Logistic Regression, SVM, and Naive Bayes
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 import pickle
 import re
 from pathlib import Path
-
-# ML Libraries
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import LinearSVC
-from sklearn.naive_bayes import MultinomialNB
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import train_test_split
-
-# NLTK (if needed for preprocessing)
-try:
-    import nltk
-    nltk.download('punkt', quiet=True)
-    nltk.download('wordnet', quiet=True)
-    nltk.download('stopwords', quiet=True)
-except:
-    pass
 
 # Set page config
 st.set_page_config(
@@ -80,9 +62,9 @@ def text_processing(text):
     return text
 
 @st.cache_resource
-def load_or_train_models():
+def load_models():
     """
-    Load pre-trained models if available, otherwise train new ones
+    Load pre-trained models from the current directory
     """
     models = {}
     model_names = {
@@ -91,100 +73,35 @@ def load_or_train_models():
         'naive_bayes': 'Naive Bayes'
     }
     
-    models_dir = Path('models')
-    models_dir.mkdir(exist_ok=True)
+    models_dir = Path('./')
+    missing_models = []
     
-    # Check if all models exist
-    all_models_exist = all((models_dir / f'{name}.pkl').exists() 
-                          for name in model_names.keys())
+    # Check which models exist
+    for model_key in model_names.keys():
+        model_path = models_dir / f'{model_key}.pkl'
+        if not model_path.exists():
+            missing_models.append(model_key)
     
-    if all_models_exist:
-        st.info("📦 Loading pre-trained models...")
+    if missing_models:
+        st.error(f"❌ Missing model files: {', '.join(missing_models)}.pkl")
+        st.error("Please ensure all model files (.pkl) are in the same directory as this app.")
+        st.stop()
+        return None
+    
+    # Load all models
+    with st.spinner("📦 Loading pre-trained models..."):
         try:
             for model_key, model_name in model_names.items():
-                with open(models_dir / f'{model_key}.pkl', 'rb') as f:
+                model_path = models_dir / f'{model_key}.pkl'
+                with open(model_path, 'rb') as f:
                     models[model_key] = pickle.load(f)
-            st.success("✅ Models loaded successfully!")
+            st.success(f"✅ Successfully loaded {len(models)} models!")
             return models
         except Exception as e:
-            st.warning(f"⚠️ Error loading models: {e}. Will train new models...")
-    
-    # Train new models if they don't exist or failed to load
-    st.info("🤖 Training models (this may take a few minutes)...")
-    
-    # Load dataset
-    data_path = 'dataset.csv'
-    try:
-        df = pd.read_csv(data_path, encoding='latin-1', header=None)
-        df.columns = ['target', 'id', 'date', 'query', 'user', 'text']
-        st.write(f"📊 Loaded {len(df)} tweets from dataset")
-    except FileNotFoundError:
-        st.error(f"❌ Dataset file '{data_path}' not found. Please ensure the dataset is in the same directory.")
-        st.stop()
-    
-    # Preprocess data
-    with st.spinner("🔄 Preprocessing data..."):
-        df = df[["text", "target"]]
-        df['text'] = df['text'].apply(text_processing)
-        
-        # Sample data for faster training
-        sample_result = train_test_split(
-            df, 
-            stratify=df["target"], 
-            train_size=100000,  # Reduced for faster training in Streamlit
-            random_state=42
-        )
-        df_sampled = sample_result[0]
-        X, y = df_sampled["text"], df_sampled["target"]
-        
-        # Split into train and test
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.15, random_state=42, stratify=y
-        )
-        
-        st.write(f"✅ Preprocessed {len(X_train)} training samples")
-    
-    # Train models
-    tfidf_vectorizer = TfidfVectorizer(max_features=7000, ngram_range=(1, 2))
-    
-    # Logistic Regression
-    with st.spinner("🤖 Training Logistic Regression model..."):
-        pipeline_lr = Pipeline([
-            ("tfidf", tfidf_vectorizer),
-            ("lr", LogisticRegression(C=0.7, penalty="l2", max_iter=1000, random_state=42))
-        ])
-        pipeline_lr.fit(X_train, y_train)
-        models['logistic_regression'] = pipeline_lr
-        st.success("✅ Logistic Regression trained!")
-    
-    # SVM
-    with st.spinner("🤖 Training SVM model..."):
-        pipeline_svm = Pipeline([
-            ("tfidf", TfidfVectorizer(max_features=7000, ngram_range=(1, 2))),
-            ("svc", LinearSVC(C=0.5, max_iter=1000, random_state=42))
-        ])
-        pipeline_svm.fit(X_train, y_train)
-        models['svm'] = pipeline_svm
-        st.success("✅ SVM trained!")
-    
-    # Naive Bayes
-    with st.spinner("🤖 Training Naive Bayes model..."):
-        pipeline_nb = Pipeline([
-            ("tfidf", TfidfVectorizer(max_features=7000, ngram_range=(1, 2))),
-            ("nb", MultinomialNB(alpha=1.0))
-        ])
-        pipeline_nb.fit(X_train, y_train)
-        models['naive_bayes'] = pipeline_nb
-        st.success("✅ Naive Bayes trained!")
-    
-    # Save models
-    with st.spinner("💾 Saving models..."):
-        for model_key in models.keys():
-            with open(models_dir / f'{model_key}.pkl', 'wb') as f:
-                pickle.dump(models[model_key], f)
-        st.success("💾 Models saved successfully!")
-    
-    return models
+            st.error(f"❌ Error loading models: {str(e)}")
+            st.error("Please check that the model files are valid pickle files.")
+            st.stop()
+            return None
 
 def predict_sentiment(text, models):
     """Get predictions from all models"""
@@ -241,12 +158,12 @@ def main():
     st.markdown('<h1 class="main-header">😊 Sentiment Analysis App</h1>', unsafe_allow_html=True)
     st.markdown("---")
     
-    # Load or train models
+    # Load models
     with st.container():
-        models = load_or_train_models()
+        models = load_models()
     
     if not models:
-        st.error("Failed to load or train models. Please check the error messages above.")
+        st.error("Failed to load models. Please check the error messages above.")
         st.stop()
     
     # Sidebar for information
@@ -307,6 +224,8 @@ def main():
         1. Enter your tweet
         2. Click "Analyze Sentiment"
         3. See predictions from all 3 models
+        
+        **Note:** Models are loaded from .pkl files in the current directory.
         """)
     
     # Make predictions
